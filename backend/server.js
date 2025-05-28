@@ -7,13 +7,7 @@ const ActiveDirectory = require('activedirectory2');
 const app = express();
 const PORT = 3000;
 
-// AD Bağlantı bilgileri
-const config = {
-  url: 'ldap://10.20.40.40',
-  baseDN: 'dc=ilab,dc=com,dc=tr',
-  username: 'oparlak@ilab.com.tr',  // AD yetkili kullanıcı
-  password: 'Onpc12345++'        // Şifresi
-};
+
 
 const ad = new ActiveDirectory(config);
 
