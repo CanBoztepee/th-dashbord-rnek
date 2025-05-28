@@ -43,5 +43,37 @@
   </div>
 </div>
 
+<script>
+  async function loadActiveTasks() {
+    const res = await fetch('/api/active-tasks');
+    const tasks = await res.json();
+    const tbody = document.getElementById('taskTableBody');
+
+    if (tasks.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4">Aktif görev bulunmamaktadır.</td></tr>';
+      return;
+    }
+
+    tasks.forEach(task => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${formatTaskType(task.type)}</td>
+        <td>${task.cron || '-'}</td>
+        <td>${task.description || ''}</td>
+        <td>${new Date(task.runAt).toLocaleString('tr-TR')}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  function formatTaskType(type) {
+    if (type === 'activate_user') return '🟢 Kullanıcıyı Aktif Et';
+    if (type === 'deactivate_user') return '🛑 Kullanıcıyı Deaktif Et';
+    return type;
+  }
+
+  loadActiveTasks();
+</script>
+
 </body>
 </html>

@@ -4,7 +4,8 @@ const path = require('path');
 const bodyParser = require('body-parser');
 const schedule = require('node-schedule');
 const ActiveDirectory = require('activedirectory2');
-
+const { v4: uuidv4 } = require('uuid');
+const { Change, Attribute } = require('ldapjs');
 
 
 const app = express();
@@ -66,6 +67,7 @@ app.get('/users', (req, res) => {
     const cleaned = users.map(user => ({
       name: user.displayName || user.cn || 'İsimsiz',
       username: user.sAMAccountName || '',
+      fullName: user.cn || '',
       email: user.mail || '',
       disabled: (user.userAccountControl & 2) === 2
     }));
@@ -100,6 +102,7 @@ app.get('/users/:username', (req, res) => {
     }
 
     const cleaned = {
+      dn: user.dn,
       name: user.displayName || user.cn || 'İsimsiz',
       username: user.sAMAccountName || '',
       email: user.mail || '',
@@ -115,24 +118,108 @@ app.get('/users/:username', (req, res) => {
 
 let scheduledTasks = [];
 
-app.post('/api/schedule-task', (req, res) => {
-  const { type, username, runAt } = req.body;
+const logs = []; // ⬅️ EKLE
+function addLog(entry) {
+  logs.push(entry);
+}
 
-  if (type !== 'deactivate_user') {
+const ldap = require('ldapjs');
+
+function enableUserDN(dn, callback) {
+  const client = ldap.createClient({ url: process.env.AD_URL });
+
+  client.bind(process.env.AD_USERNAME, process.env.AD_PASSWORD, (err) => {
+    if (err) {
+      console.error('❌ LDAP bind hatası:', err);
+      return callback(err);
+    }
+
+    const attribute = new Attribute({
+      type: 'userAccountControl',
+      values: ['512']
+    });
+
+    const change = new Change({
+      operation: 'replace',
+      modification: attribute
+    });
+
+    client.modify(dn, change, (err) => {
+      if (err) {
+        console.error('❌ Kullanıcı aktif etme hatası:', err);
+        return callback(err);
+      }
+
+      console.log('✅ Kullanıcı aktif hale getirildi:', dn);
+      callback(null);
+    });
+  });
+}
+
+
+
+app.get('/api/active-tasks', (req, res) => {
+  const now = Date.now();
+
+  const upcoming = scheduledTasks.filter(task => {
+    const runAt = new Date(task.runAt).getTime();
+    return runAt > now;
+  });
+
+  res.json(upcoming);
+});
+
+
+
+
+app.post('/api/schedule-task', (req, res) => {
+  const { type, username, runAt, description, label } = req.body;
+
+  if (!['activate_user', 'deactivate_user'].includes(type)) {
     return res.status(400).json({ error: 'Geçersiz görev tipi.' });
   }
 
   const date = new Date(runAt);
+  const id = uuidv4();
+
   const job = schedule.scheduleJob(date, () => {
-    console.log(`🛑 Kullanıcı deaktifleştiriliyor: ${username}`);
-    // Buraya AD update işlemini yazacaksın
-    // Örn: ad.disableUser(`CN=${username},OU=Users,...`)
+    const dn = `CN=${username},${process.env.AD_USER_DN}`;
+
+    if (type === 'activate_user') {
+      enableUserDN(dn, (err) => {
+        if (err) {
+          addLog({ username, type, status: 'error', timestamp: new Date(), message: err.message, label });
+        } else {
+          addLog({ username, type, status: 'success', timestamp: new Date(), message: 'Aktif edildi', label });
+        }
+      });
+    } else if (type === 'deactivate_user') {
+      disableUserDN(dn, (err) => {
+        if (err) {
+          addLog({ username, type, status: 'error', timestamp: new Date(), message: err.message, label });
+        } else {
+          addLog({ username, type, status: 'success', timestamp: new Date(), message: 'Deaktif edildi', label });
+        }
+      });
+    }
   });
 
-  scheduledTasks.push({ type, username, runAt, id: job.name });
-  console.log(`📅 Görev zamanlandı: ${username} ${runAt}`);
+  scheduledTasks.push({
+    id,
+    username,
+    type,
+    runAt,
+    description: description || `${type} görevi`,
+    label: label || username
+  });
+
   res.json({ success: true });
 });
+
+app.get('/api/task-logs', (req, res) => {
+  res.json(logs);
+});
+
 
 
 
