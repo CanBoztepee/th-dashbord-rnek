@@ -48,3 +48,8 @@ table td, table th {
   background-color: #0d6efd;
   color: #fff;
 }
+
+input[type="datetime-local"] {
+  pointer-events: auto !important;
+  z-index: 2;
+}

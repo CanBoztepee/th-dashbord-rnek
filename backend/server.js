@@ -5,8 +5,11 @@ const bodyParser = require('body-parser');
 const schedule = require('node-schedule');
 const ActiveDirectory = require('activedirectory2');
 
+
+
 const app = express();
 const PORT = 3000;
+
 
 const config = {
   url: process.env.AD_URL,
@@ -18,14 +21,26 @@ const config = {
 
 const ad = new ActiveDirectory(config);
 
+let cachedUsers = null;
+let lastFetchTime = 0;
+const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 dakika
+
+
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 
-// Tüm kullanıcıları listele (belirli özelliklerle)
-// Tüm kullanıcıları listele (aktif + deaktif)
+
 app.get('/users', (req, res) => {
+  const now = Date.now();
+
+  // Eğer cache taze ise, bellektekini gönder
+  if (cachedUsers && (now - lastFetchTime < CACHE_DURATION_MS)) {
+    console.log("⚡ Bellekten kullanıcı verisi gönderildi");
+    return res.json(cachedUsers);
+  }
+
   const opts = {
     filter: '(&(objectCategory=person)(objectClass=user))',
     scope: 'sub',
@@ -52,12 +67,17 @@ app.get('/users', (req, res) => {
       name: user.displayName || user.cn || 'İsimsiz',
       username: user.sAMAccountName || '',
       email: user.mail || '',
-      disabled: (user.userAccountControl & 2) === 2 // frontend ayırmak isterse diye
+      disabled: (user.userAccountControl & 2) === 2
     }));
+
+    // Cache'i güncelle
+    cachedUsers = cleaned;
+    lastFetchTime = now;
 
     return res.json(cleaned);
   });
 });
+
 
 
 app.get('/users/:username', (req, res) => {
@@ -90,6 +110,28 @@ app.get('/users/:username', (req, res) => {
 
     return res.json(cleaned);
   });
+});
+
+
+let scheduledTasks = [];
+
+app.post('/api/schedule-task', (req, res) => {
+  const { type, username, runAt } = req.body;
+
+  if (type !== 'deactivate_user') {
+    return res.status(400).json({ error: 'Geçersiz görev tipi.' });
+  }
+
+  const date = new Date(runAt);
+  const job = schedule.scheduleJob(date, () => {
+    console.log(`🛑 Kullanıcı deaktifleştiriliyor: ${username}`);
+    // Buraya AD update işlemini yazacaksın
+    // Örn: ad.disableUser(`CN=${username},OU=Users,...`)
+  });
+
+  scheduledTasks.push({ type, username, runAt, id: job.name });
+  console.log(`📅 Görev zamanlandı: ${username} ${runAt}`);
+  res.json({ success: true });
 });
 
 
